@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>F1 Watchability</title>
+  <style>
+    /* ── Reset & base ────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:         #0f0f0f;
+      --surface:    #1a1a1a;
+      --surface2:   #242424;
+      --border:     #2e2e2e;
+      --text:       #e8e8e8;
+      --text-dim:   #777;
+      --red:        #e8002d;   /* F1 red */
+      --green:      #00d67a;
+      --yellow:     #ffd700;
+      --orange:     #ff8c00;
+      --muted-red:  #c0392b;
+      --radius:     10px;
+      --font:       'Inter', system-ui, -apple-system, sans-serif;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      min-height: 100vh;
+    }
+
+    /* ── Header ──────────────────────────────────────────────────────────── */
+    header {
+      background: var(--surface);
+      border-bottom: 2px solid var(--red);
+      padding: 1rem 2rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    header h1 {
+      font-size: 1.4rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    header h1 span { color: var(--red); }
+
+    header .subtitle {
+      font-size: 0.8rem;
+      color: var(--text-dim);
+      margin-top: 2px;
+    }
+
+    /* ── Controls ────────────────────────────────────────────────────────── */
+    .controls {
+      padding: 1.5rem 2rem;
+      display: flex;
+      gap: 1rem;
+      align-items: flex-end;
+      flex-wrap: wrap;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .field { display: flex; flex-direction: column; gap: 0.4rem; }
+    .field label { font-size: 0.72rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.08em; }
+
+    select {
+      background: var(--surface2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.55rem 2.2rem 0.55rem 0.9rem;
+      font-size: 0.9rem;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23777' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 0.7rem center;
+      cursor: pointer;
+      min-width: 220px;
+    }
+
+    select:focus { outline: 2px solid var(--red); border-color: transparent; }
+    select:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    button#score-btn {
+      background: var(--red);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius);
+      padding: 0.55rem 1.4rem;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+      white-space: nowrap;
+    }
+
+    button#score-btn:hover  { opacity: 0.85; }
+    button#score-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ── Main content area ───────────────────────────────────────────────── */
+    main {
+      padding: 2rem;
+      max-width: 960px;
+    }
+
+    /* ── States ──────────────────────────────────────────────────────────── */
+    .state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1rem;
+      padding: 4rem 2rem;
+      color: var(--text-dim);
+      text-align: center;
+    }
+
+    .state .icon { font-size: 2.5rem; }
+    .state p     { font-size: 0.95rem; max-width: 360px; line-height: 1.6; }
+    .state.error .icon { color: var(--muted-red); }
+
+    /* Spinner */
+    .spinner {
+      width: 36px; height: 36px;
+      border: 3px solid var(--border);
+      border-top-color: var(--red);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Weekend header ──────────────────────────────────────────────────── */
+    .weekend-header {
+      margin-bottom: 1.5rem;
+    }
+
+    .weekend-header h2 {
+      font-size: 1.6rem;
+      font-weight: 700;
+    }
+
+    .weekend-header .meta {
+      color: var(--text-dim);
+      font-size: 0.85rem;
+      margin-top: 0.3rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    /* ── Session cards ───────────────────────────────────────────────────── */
+    .sessions { display: flex; flex-direction: column; gap: 1rem; }
+
+    .session-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      transition: border-color 0.2s;
+    }
+
+    .session-card:hover { border-color: #444; }
+
+    .card-header {
+      padding: 1.1rem 1.4rem;
+      display: flex;
+      align-items: center;
+      gap: 1.2rem;
+      cursor: default;
+    }
+
+    .session-type-badge {
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      min-width: 130px;
+    }
+
+    .score-block {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex: 1;
+    }
+
+    .score-bar-wrap {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+
+    .score-bar {
+      flex: 1;
+      height: 6px;
+      background: var(--border);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .score-bar-fill {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.6s ease;
+    }
+
+    .score-number {
+      font-size: 0.85rem;
+      font-weight: 700;
+      min-width: 48px;
+      text-align: right;
+    }
+
+    .adjusted-badge {
+      font-size: 0.65rem;
+      color: var(--text-dim);
+      font-style: italic;
+    }
+
+    /* Recommendation pill */
+    .rec-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.3rem 0.85rem;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .rec-full       { background: rgba(0, 214, 122, 0.15); color: var(--green);  border: 1px solid rgba(0,214,122,0.3); }
+    .rec-30         { background: rgba(255, 215, 0, 0.12);  color: var(--yellow); border: 1px solid rgba(255,215,0,0.3); }
+    .rec-highlights { background: rgba(255,140, 0, 0.12);  color: var(--orange); border: 1px solid rgba(255,140,0,0.3); }
+
+    /* ── Spoiler toggle button ────────────────────────────────────────────── */
+    .spoiler-btn {
+      margin: 0 1.4rem 0 auto;
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      border-radius: 6px;
+      padding: 0.3rem 0.75rem;
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s;
+      white-space: nowrap;
+    }
+
+    .spoiler-btn:hover { border-color: #555; color: var(--text); }
+
+    /* ── Card detail section ─────────────────────────────────────────────── */
+    .card-detail {
+      border-top: 1px solid var(--border);
+      padding: 1rem 1.4rem;
+      display: none;
+    }
+
+    .card-detail.open { display: block; }
+
+    /* Bonuses / penalties */
+    .bp-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+      margin-bottom: 1rem;
+    }
+
+    .bp-item {
+      display: flex;
+      align-items: baseline;
+      gap: 0.5rem;
+      font-size: 0.82rem;
+    }
+
+    .bp-arrow { font-size: 0.7rem; font-weight: 700; }
+    .bp-pos .bp-arrow { color: var(--green); }
+    .bp-neg .bp-arrow { color: var(--muted-red); }
+
+    .bp-name { flex: 1; }
+    .bp-points { font-weight: 700; min-width: 36px; text-align: right; }
+    .bp-pos .bp-points { color: var(--green); }
+    .bp-neg .bp-points { color: var(--muted-red); }
+
+    .bp-reasoning {
+      display: block;
+      color: var(--text-dim);
+      font-size: 0.76rem;
+      margin-top: 1px;
+      margin-left: 1.1rem;
+    }
+
+    /* Factor table */
+    .factor-section h4 {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-dim);
+      margin-bottom: 0.75rem;
+    }
+
+    .factor-row {
+      display: grid;
+      grid-template-columns: 160px 40px 1fr 1fr;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.35rem 0;
+      font-size: 0.82rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .factor-row:last-child { border-bottom: none; }
+
+    .factor-name { color: var(--text-dim); }
+    .factor-score { font-weight: 700; text-align: right; }
+
+    .factor-bar {
+      height: 4px;
+      background: var(--border);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .factor-bar-fill {
+      height: 100%;
+      border-radius: 2px;
+    }
+
+    .factor-reasoning { color: var(--text-dim); font-size: 0.76rem; }
+
+    /* ── Utility colour classes ──────────────────────────────────────────── */
+    .c-green  { color: var(--green);  }
+    .c-yellow { color: var(--yellow); }
+    .c-orange { color: var(--orange); }
+    .c-red    { color: var(--muted-red); }
+
+    .bg-green  { background: var(--green); }
+    .bg-yellow { background: var(--yellow); }
+    .bg-orange { background: var(--orange); }
+    .bg-red    { background: var(--muted-red); }
+
+    /* ── Responsive ──────────────────────────────────────────────────────── */
+    @media (max-width: 640px) {
+      header { padding: 1rem; }
+      .controls { padding: 1rem; }
+      main { padding: 1rem; }
+      .card-header { flex-wrap: wrap; gap: 0.75rem; }
+      .session-type-badge { min-width: unset; }
+      .factor-row { grid-template-columns: 130px 36px 1fr; }
+      .factor-reasoning { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>🏎️ F1 <span>Watchability</span></h1>
+    <div class="subtitle">Find out which sessions are worth your time — spoiler free</div>
+  </div>
+</header>
+
+<div class="controls">
+  <div class="field">
+    <label for="year-select">Season</label>
+    <select id="year-select">
+      <option value="2026" selected>2026</option>
+      <option value="2025">2025</option>
+      <option value="2024">2024</option>
+      <option value="2023">2023</option>
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="race-select">Race Weekend</label>
+    <select id="race-select" disabled>
+      <option value="">Loading calendar…</option>
+    </select>
+  </div>
+
+  <button id="score-btn" disabled>Score This Weekend</button>
+</div>
+
+<main id="main-content">
+  <div class="state" id="state-idle">
+    <div class="icon">🏁</div>
+    <p>Select a race weekend above and click <strong>Score This Weekend</strong> to see watchability scores.</p>
+  </div>
+
+  <div class="state" id="state-loading" style="display:none">
+    <div class="spinner"></div>
+    <p id="loading-text">Fetching session data from OpenF1…</p>
+  </div>
+
+  <div class="state error" id="state-error" style="display:none">
+    <div class="icon">⚠️</div>
+    <p id="error-text">Something went wrong.</p>
+  </div>
+
+  <div id="results" style="display:none"></div>
+</main>
+
+<script>
+  // ── State ─────────────────────────────────────────────────────────────────
+
+  const yearSelect  = document.getElementById("year-select");
+  const raceSelect  = document.getElementById("race-select");
+  const scoreBtn    = document.getElementById("score-btn");
+  const stateIdle   = document.getElementById("state-idle");
+  const stateLoad   = document.getElementById("state-loading");
+  const stateError  = document.getElementById("state-error");
+  const errorText   = document.getElementById("error-text");
+  const results     = document.getElementById("results");
+
+  function showState(name) {
+    stateIdle.style.display  = name === "idle"    ? "flex" : "none";
+    stateLoad.style.display  = name === "loading" ? "flex" : "none";
+    stateError.style.display = name === "error"   ? "flex" : "none";
+    results.style.display    = name === "results" ? "block" : "none";
+  }
+
+  // ── Calendar loading ──────────────────────────────────────────────────────
+
+  async function loadCalendar(year) {
+    raceSelect.disabled = true;
+    scoreBtn.disabled   = true;
+    raceSelect.innerHTML = '<option value="">Loading…</option>';
+
+    try {
+      const res  = await fetch(`/api/calendar?year=${year}`);
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error);
+
+      raceSelect.innerHTML = '<option value="">— Select a race —</option>';
+      data.meetings.forEach(m => {
+        const opt   = document.createElement("option");
+        opt.value   = m.meeting_key;
+        opt.dataset.meetingName = m.meeting_name;
+        const sprint = m.is_sprint_weekend ? " ⚡" : "";
+        opt.textContent = `${m.meeting_name}${sprint}`;
+        raceSelect.appendChild(opt);
+      });
+
+      raceSelect.disabled = false;
+    } catch (err) {
+      raceSelect.innerHTML = '<option value="">Failed to load calendar</option>';
+      console.error(err);
+    }
+  }
+
+  yearSelect.addEventListener("change", () => {
+    showState("idle");
+    loadCalendar(yearSelect.value);
+  });
+
+  raceSelect.addEventListener("change", () => {
+    scoreBtn.disabled = !raceSelect.value;
+  });
+
+  // ── Scoring ───────────────────────────────────────────────────────────────
+
+  scoreBtn.addEventListener("click", async () => {
+    const year       = yearSelect.value;
+    const meetingKey = raceSelect.value;
+    const name       = raceSelect.options[raceSelect.selectedIndex]?.dataset.meetingName || "race";
+
+    showState("loading");
+    document.getElementById("loading-text").textContent =
+      `Fetching and scoring ${name}… this may take a few seconds.`;
+
+    try {
+      const res  = await fetch(`/api/score?year=${year}&meeting_key=${meetingKey}`);
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error);
+      renderReport(data.report);
+      showState("results");
+    } catch (err) {
+      errorText.textContent = err.message || "Something went wrong fetching race data.";
+      showState("error");
+    }
+  });
+
+  // ── Rendering ─────────────────────────────────────────────────────────────
+
+  const SESSION_EMOJI = {
+    "Race":              "🏁",
+    "Sprint":            "⚡",
+    "Qualifying":        "⏱️",
+    "Sprint Qualifying": "🎯",
+  };
+
+  const SESSION_LABEL = {
+    "Race":              "Main Race",
+    "Sprint":            "Sprint Race",
+    "Qualifying":        "Qualifying",
+    "Sprint Qualifying": "Sprint Qualifying",
+  };
+
+  function scoreColour(score) {
+    if (score >= 70) return "green";
+    if (score >= 55) return "green";
+    if (score >= 40) return "yellow";
+    if (score >= 28) return "orange";
+    return "red";
+  }
+
+  function recClass(rec) {
+    if (rec === "Watch Full")       return "rec-full";
+    if (rec === "Race in 30")       return "rec-30";
+    if (rec === "Watch Highlights") return "rec-highlights";
+    return "";
+  }
+
+  function recEmoji(rec) {
+    if (rec === "Watch Full")       return "✅";
+    if (rec === "Race in 30")       return "🟡";
+    if (rec === "Watch Highlights") return "📋";
+    return "";
+  }
+
+  function formatBpName(name) {
+    return name.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+  }
+
+  function renderReport(report) {
+    const html = `
+      <div class="weekend-header">
+        <h2>${report.meeting_name} ${report.year}</h2>
+        <div class="meta">
+          <span>📍 ${report.circuit_short_name}</span>
+        </div>
+      </div>
+      <div class="sessions">
+        ${report.sessions.map(renderSession).join("")}
+      </div>
+    `;
+    results.innerHTML = html;
+
+    // Wire up spoiler toggles
+    results.querySelectorAll(".spoiler-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const detail = btn.closest(".session-card").querySelector(".card-detail");
+        const open   = detail.classList.toggle("open");
+        btn.textContent = open ? "Hide Reasoning" : "Show Reasoning";
+      });
+    });
+  }
+
+  function renderSession(ss) {
+    const colour     = scoreColour(ss.total_score);
+    const emoji      = SESSION_EMOJI[ss.session_type] || "🏎️";
+    const label      = SESSION_LABEL[ss.session_type] || ss.session_type;
+    const adjustedBadge = ss.circuit_override
+      ? `<span class="adjusted-badge">circuit-adjusted</span>` : "";
+
+    const bpHtml = ss.bonuses_penalties.length ? `
+      <div class="bp-list">
+        ${ss.bonuses_penalties.map(bp => `
+          <div class="bp-item ${bp.points > 0 ? "bp-pos" : "bp-neg"}">
+            <span class="bp-arrow">${bp.points > 0 ? "▲" : "▼"}</span>
+            <span class="bp-name">${formatBpName(bp.name)}</span>
+            <span class="bp-points">${bp.points > 0 ? "+" : ""}${bp.points}</span>
+            <span class="bp-reasoning">${bp.reasoning}</span>
+          </div>
+        `).join("")}
+      </div>
+    ` : "";
+
+    const factorsHtml = ss.factors.length ? `
+      <div class="factor-section">
+        <h4>Factor Breakdown</h4>
+        ${ss.factors.map(f => {
+          const fc = scoreColour(f.score);
+          return `
+            <div class="factor-row">
+              <div class="factor-name">${formatBpName(f.name)}</div>
+              <div class="factor-score c-${fc}">${Math.round(f.score)}</div>
+              <div class="factor-bar">
+                <div class="factor-bar-fill bg-${fc}" style="width:${f.score}%"></div>
+              </div>
+              <div class="factor-reasoning">${f.reasoning}</div>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    ` : "";
+
+    return `
+      <div class="session-card">
+        <div class="card-header">
+          <div class="session-type-badge">${emoji} ${label}</div>
+          <div class="score-block">
+            <div class="score-bar-wrap">
+              <div class="score-bar">
+                <div class="score-bar-fill bg-${colour}" style="width:${ss.total_score}%"></div>
+              </div>
+              <div class="score-number c-${colour}">${Math.round(ss.total_score)}<span style="color:var(--text-dim);font-weight:400">/100</span></div>
+            </div>
+            ${adjustedBadge}
+          </div>
+          <div class="rec-pill ${recClass(ss.recommendation)}">
+            ${recEmoji(ss.recommendation)} ${ss.recommendation}
+          </div>
+          <button class="spoiler-btn">Show Reasoning</button>
+        </div>
+        <div class="card-detail">
+          ${bpHtml}
+          ${factorsHtml}
+        </div>
+      </div>
+    `;
+  }
+
+  // ── Init ──────────────────────────────────────────────────────────────────
+
+  loadCalendar(yearSelect.value);
+</script>
+</body>
+</html>

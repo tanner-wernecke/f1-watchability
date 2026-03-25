@@ -1,0 +1,10 @@
+import sys
+import os
+
+# Ensure the project root is on the path
+sys.path.insert(0, os.path.dirname(__file__))
+
+from f1_watchability.web.app import app
+
+if __name__ == "__main__":
+    app.run()

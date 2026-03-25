@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "f1-watchability"
+version = "0.1.0"
+description = "Find out which F1 sessions are worth watching — without spoiling why"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "requests>=2.31.0",
+    "rich>=13.0.0",
+    "pyyaml>=6.0",
+    "flask>=3.0.0",
+]
+
+[project.scripts]
+f1watch     = "f1_watchability.cli:main"
+f1watch-web = "f1_watchability.web.app:app.run"
+
+[tool.setuptools.packages.find]
+where   = ["."]
+include = ["f1_watchability*"]
+
+[tool.setuptools.package-data]
+f1_watchability = ["../config/*.yaml", "web/templates/*.html", "web/static/*"]

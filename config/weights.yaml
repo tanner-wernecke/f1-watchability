@@ -1,0 +1,171 @@
+# =============================================================================
+# F1 Watchability — Scoring Configuration
+# =============================================================================
+#
+# HOW IT WORKS
+# ------------
+# Each session is scored 0–100 across several factors. Factors are combined
+# using the weights below into a final score. The final score is then compared
+# against thresholds to produce a recommendation.
+#
+# Circuit-specific overrides can adjust both weights and thresholds for tracks
+# that behave differently from the norm (e.g. Monaco). Any circuit not listed
+# in the overrides section automatically uses the defaults.
+#
+# Bonuses and penalties are flat adjustments applied after the weighted score
+# is calculated. They handle exceptional or processional moments that the
+# continuous factors can't capture well.
+#
+# WEIGHTS
+# -------
+# Weights within each session type should sum to 1.0.
+#
+# THRESHOLDS (Race / Sprint Race)
+# --------------------------------
+#   score >= watch_full   → Watch Full
+#   score >= race_in_30   → Race in 30
+#   score <  race_in_30   → Watch Highlights
+#
+# THRESHOLDS (Qualifying / Sprint Qualifying)
+# -------------------------------------------
+#   score >= watch_full   → Watch Full
+#   score <  watch_full   → Watch Highlights
+# =============================================================================
+
+
+# ── Default weights & thresholds ─────────────────────────────────────────────
+
+defaults:
+  race:
+    weights:
+      close_finish: 0.20
+      overtakes: 0.20
+      grid_vs_result: 0.15
+      safety_car: 0.10
+      pit_stop_variety: 0.10
+      team_diversity: 0.10
+      dnf_drama: 0.10
+      wet_weather: 0.05
+    thresholds:
+      watch_full: 65
+      race_in_30: 38
+
+  qualifying:
+    weights:
+      close_gaps: 0.40
+      grid_shuffle: 0.30
+      dnf_drama: 0.15
+      wet_weather: 0.15
+    thresholds:
+      watch_full: 60
+
+  sprint_race:
+    weights:
+      close_finish: 0.25
+      overtakes: 0.25
+      grid_vs_result: 0.20
+      safety_car: 0.10
+      dnf_drama: 0.10
+      wet_weather: 0.10
+    thresholds:
+      watch_full: 65
+      race_in_30: 38
+
+  sprint_qualifying:
+    weights:
+      close_gaps: 0.45
+      grid_shuffle: 0.30
+      dnf_drama: 0.10
+      wet_weather: 0.15
+    thresholds:
+      watch_full: 60
+
+
+# ── Bonuses & penalties ───────────────────────────────────────────────────────
+
+bonuses:
+  last_lap_lead_change: 15
+  sub_one_second_finish: 10
+  red_flag_restart: 8
+  championship_lead_change: 10
+  multiple_sc: 6
+
+penalties:
+  dominant_leader: -12
+  no_top10_position_changes: -10
+  result_mirrors_grid: -8
+
+
+# ── Circuit overrides ─────────────────────────────────────────────────────────
+# Only circuits that behave differently from the norm need entries here.
+# Partial overrides are supported — omitted keys fall back to defaults.
+
+circuit_overrides:
+
+  Monaco:
+    race:
+      weights:
+        close_finish: 0.15
+        overtakes: 0.05
+        grid_vs_result: 0.10
+        safety_car: 0.20
+        pit_stop_variety: 0.20
+        team_diversity: 0.10
+        dnf_drama: 0.15
+        wet_weather: 0.05
+      thresholds:
+        watch_full: 48
+        race_in_30: 28
+    qualifying:
+      weights:
+        close_gaps: 0.50
+        grid_shuffle: 0.25
+        dnf_drama: 0.10
+        wet_weather: 0.15
+      thresholds:
+        watch_full: 50
+
+  Singapore:
+    race:
+      weights:
+        close_finish: 0.15
+        overtakes: 0.10
+        grid_vs_result: 0.10
+        safety_car: 0.20
+        pit_stop_variety: 0.20
+        team_diversity: 0.10
+        dnf_drama: 0.10
+        wet_weather: 0.05
+      thresholds:
+        watch_full: 52
+        race_in_30: 30
+    qualifying:
+      thresholds:
+        watch_full: 52
+
+  Baku:
+    race:
+      thresholds:
+        watch_full: 70
+        race_in_30: 45
+
+  Monza:
+    race:
+      weights:
+        close_finish: 0.30
+        overtakes: 0.10
+        grid_vs_result: 0.15
+        safety_car: 0.10
+        pit_stop_variety: 0.10
+        team_diversity: 0.10
+        dnf_drama: 0.10
+        wet_weather: 0.05
+      thresholds:
+        watch_full: 62
+        race_in_30: 36
+
+  Spa:
+    race:
+      thresholds:
+        watch_full: 68
+        race_in_30: 40

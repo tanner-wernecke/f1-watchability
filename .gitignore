@@ -1,0 +1,18 @@
+# Cache — don't commit scored race data to git
+.cache/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# OS
+.DS_Store
