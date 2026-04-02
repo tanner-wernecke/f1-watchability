@@ -161,24 +161,46 @@ def fetch_session_data(session_info: SessionInfo, grid_positions: dict[int, int]
         # Use session_result for qualifying — gives position + gap_to_leader
         drivers, interval_data = _build_quali_drivers(sk, driver_map)
     else:
-        # Race: use position time-series for drivers, intervals for gaps
-        final_positions: dict[int, int] = {}
-        for p in raw_position:
-            num = p.get("driver_number")
-            pos = p.get("position")
-            if num is not None and pos is not None:
-                final_positions[num] = pos
-
+        # Race/Sprint: prefer session_result for accurate final positions,
+        # fall back to last position snapshot from position time-series
         drivers = []
-        for num, pos in final_positions.items():
-            d = driver_map.get(num, {})
-            drivers.append(DriverResult(
-                driver_number=num,
-                full_name=d.get("full_name", f"Driver #{num}"),
-                team_name=d.get("team_name", "Unknown"),
-                finish_position=pos,
-                grid_position=(grid_positions or {}).get(num, 0),
-            ))
+        raw_result = api.get_session_result(sk)
+
+        if raw_result:
+            for entry in raw_result:
+                num = entry.get("driver_number")
+                pos = entry.get("position")
+                if num is None or pos is None:
+                    continue
+                d = driver_map.get(num, {})
+                classified = entry.get("dnf") is None and entry.get("dns") is None and entry.get("dsq") is None
+                drivers.append(DriverResult(
+                    driver_number=num,
+                    full_name=d.get("full_name", f"Driver #{num}"),
+                    team_name=d.get("team_name", "Unknown"),
+                    finish_position=int(pos),
+                    grid_position=(grid_positions or {}).get(num, 0),
+                    is_classified=classified,
+                ))
+        else:
+            # Fallback: infer final positions from last position snapshot
+            final_positions: dict[int, int] = {}
+            for p in raw_position:
+                num = p.get("driver_number")
+                pos = p.get("position")
+                if num is not None and pos is not None:
+                    final_positions[num] = pos
+
+            for num, pos in final_positions.items():
+                d = driver_map.get(num, {})
+                drivers.append(DriverResult(
+                    driver_number=num,
+                    full_name=d.get("full_name", f"Driver #{num}"),
+                    team_name=d.get("team_name", "Unknown"),
+                    finish_position=pos,
+                    grid_position=(grid_positions or {}).get(num, 0),
+                ))
+
         drivers.sort(key=lambda x: x.finish_position)
         interval_data = raw_intervals
 

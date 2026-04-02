@@ -134,47 +134,57 @@ def _score_overtakes(
     drivers: list[DriverResult],
 ) -> FactorScore:
     """
-    Count net position gains in the top 10, excluding pit-stop laps.
-    Only counts on-track passes to avoid noise from pit cycles.
+    Count net position gains in the top 10 using date-ordered position snapshots.
+    OpenF1 position data is a time-series stream — there is no lap_number field,
+    so we sort by date and diff consecutive snapshots per driver.
     """
     if not position_data:
         return FactorScore("overtakes", 50.0, 0.0, "No position data available")
 
-    # Build per-driver lap→position timeline
-    timeline: dict[int, dict[int, int]] = defaultdict(dict)
-    for entry in position_data:
+    # Sort all entries chronologically
+    sorted_data = sorted(position_data, key=lambda e: e.get("date", ""))
+
+    # Build per-driver ordered position list
+    timeline: dict[int, list[int]] = defaultdict(list)
+    for entry in sorted_data:
         num = entry.get("driver_number")
-        lap = entry.get("lap_number") or 0
         pos = entry.get("position")
         if num is not None and pos is not None:
-            timeline[num][lap] = pos
+            # Only append if position changed (deduplicate consecutive identical values)
+            if not timeline[num] or timeline[num][-1] != pos:
+                timeline[num].append(pos)
 
-    # Pit laps to exclude (lap of stop + 1 buffer lap)
-    pit_laps: dict[int, set[int]] = defaultdict(set)
-    for p in pit_stops:
-        pit_laps[p.driver_number].update({p.lap_number, p.lap_number + 1})
-
-    # Top 10 driver numbers (by finish position)
+    # Top 10 driver numbers by finish position
     top10_nums = {d.driver_number for d in sorted(drivers, key=lambda x: x.finish_position)[:10]}
+    pit_driver_nums = {p.driver_number for p in pit_stops}
 
     overtake_count = 0
-    for num, laps in timeline.items():
+    for num, positions in timeline.items():
         if num not in top10_nums:
             continue
-        sorted_laps = sorted(laps.items())
-        for i in range(1, len(sorted_laps)):
-            prev_lap, prev_pos = sorted_laps[i - 1]
-            curr_lap, curr_pos = sorted_laps[i]
-            if curr_pos < prev_pos and curr_lap not in pit_laps[num]:
-                overtake_count += prev_pos - curr_pos
+        if len(positions) < 2:
+            continue
 
-    # 0 = 0, 10 = 50, 30+ = 100 (wider curve than before)
+        for i in range(1, len(positions)):
+            prev_pos = positions[i - 1]
+            curr_pos = positions[i]
+            if curr_pos < prev_pos:
+                gain = prev_pos - curr_pos
+                # Skip large sudden gains — likely a pit exit returning to track
+                # (pit exit typically causes jump of 5+ positions at once)
+                if gain >= 8:
+                    continue
+                overtake_count += gain
+
+    # Discount for pit stop noise — each pitting car generates ~1-2 false positives
+    overtake_count = max(0, overtake_count - len(pit_driver_nums & top10_nums))
+
     score = _clamp(_linear(overtake_count, 0, 35))
     return FactorScore(
         name="overtakes",
         score=score,
         weight=0.0,
-        reasoning=f"Estimated {overtake_count} on-track position gains in top 10",
+        reasoning=f"Estimated {overtake_count} on-track position changes in top 10",
     )
 
 
