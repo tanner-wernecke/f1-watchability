@@ -14,6 +14,7 @@ from ..config_loader import load_config
 from ..fetcher import fetch_grid_positions, fetch_session_data, get_meetings_with_sessions
 from ..models import SessionInfo, SessionScore, WeekendReport
 from ..scorer import score_session
+from ..season_stats import build_season_stats
 from . import cache as cache_store
 
 logger = logging.getLogger(__name__)
@@ -44,7 +45,7 @@ def get_calendar(year: int) -> list[dict]:
 def score_weekend(meeting_key: int, year: int, config: dict | None = None) -> WeekendReport | None:
     """
     Fetches and scores all sessions for a given meeting.
-    Returns a WeekendReport or None if no sessions could be scored.
+    Scores are normalised relative to the season's completed races.
     Results are cached — changing the config auto-invalidates the cache.
     """
     if config is None:
@@ -56,7 +57,7 @@ def score_weekend(meeting_key: int, year: int, config: dict | None = None) -> We
     cached = cache_store.get(year, meeting_key, cfg_hash)
     if cached is not None:
         logger.info(f"Serving from cache: {year} meeting {meeting_key}")
-        return _dict_to_report(cached)
+        return _CachedReport(cached)
 
     # ── Fetch and score ───────────────────────────────────────────────────────
     meetings = get_meetings_with_sessions(year=year)
@@ -81,12 +82,16 @@ def score_weekend(meeting_key: int, year: int, config: dict | None = None) -> We
         except Exception as e:
             logger.warning(f"Could not fetch sprint qualifying grid positions: {e}")
 
+    # ── Build season stats from all OTHER completed meetings ──────────────────
+    season_stats = _build_season_stats_for(year, meeting_key, config, cfg_hash)
+
+    # ── Score each session ────────────────────────────────────────────────────
     scored: list[SessionScore] = []
     for session_info in sessions:
         try:
             grid_positions = grid_position_cache.get(session_info.session_type)
             raw = fetch_session_data(session_info, grid_positions=grid_positions)
-            scored.append(score_session(raw, config))
+            scored.append(score_session(raw, config, season_stats=season_stats))
         except Exception as e:
             logger.warning(f"Could not score {session_info.session_name}: {e}")
 
@@ -106,6 +111,28 @@ def score_weekend(meeting_key: int, year: int, config: dict | None = None) -> We
     cache_store.set(year, meeting_key, cfg_hash, report_dict)
 
     return report
+
+
+def _build_season_stats_for(year: int, current_meeting_key: int, config: dict, cfg_hash: str):
+    """
+    Build SeasonStats from all previously cached race weekends in this season,
+    excluding the current meeting. Uses the cache so we don't re-fetch old races.
+    """
+    from ..season_stats import SeasonStats, build_season_stats
+
+    completed_reports = []
+    all_meetings = get_meetings_with_sessions(year=year)
+
+    for mk in all_meetings:
+        if mk == current_meeting_key:
+            continue
+        cached = cache_store.get(year, mk, cfg_hash)
+        if cached is None:
+            continue
+        # Reconstruct minimal report for stats — we only need factor scores
+        completed_reports.append(_CachedReport(cached))
+
+    return build_season_stats(completed_reports, current_meeting_key)
 
 
 def weekend_report_to_dict(report: WeekendReport) -> dict:
@@ -153,25 +180,63 @@ def ss_order(sessions: list[SessionScore]) -> list[SessionScore]:
     return [by_type[t] for t in order if t in by_type]
 
 
-def _dict_to_report(d: dict) -> WeekendReport:
-    """
-    Reconstruct a minimal WeekendReport from a cached dict.
-    We only need the dict form for the web API, so this just wraps it
-    in a lightweight sentinel object that weekend_report_to_dict can re-serialise.
-    """
-    return _CachedReport(d)
-
-
 class _CachedReport:
-    """Thin wrapper so cached dicts pass through weekend_report_to_dict cleanly."""
+    """Thin wrapper so cached dicts pass through the API and season stats cleanly."""
     def __init__(self, data: dict):
         self._data = data
         self.meeting_name       = data["meeting_name"]
         self.circuit_short_name = data["circuit_short_name"]
         self.year               = data["year"]
-
-    def is_cached(self) -> bool:
-        return True
+        # Reconstruct minimal session list for season stats
+        self.sessions           = _sessions_from_dict(data)
 
     def to_dict(self) -> dict:
         return self._data
+
+
+def _sessions_from_dict(data: dict) -> list:
+    """
+    Reconstruct minimal SessionScore-like objects from a cached dict,
+    just enough for build_season_stats to read factor scores from.
+    """
+    from ..models import SessionScore, FactorScore, BonusPenalty, SessionInfo
+
+    results = []
+    for s in data.get("sessions", []):
+        session_info = SessionInfo(
+            session_key=0,
+            session_name=s.get("session_name", ""),
+            session_type=s.get("session_type", ""),
+            meeting_name=data["meeting_name"],
+            circuit_short_name=data["circuit_short_name"],
+            date_start=s.get("date_start", ""),
+            year=data["year"],
+            meeting_key=0,
+        )
+        factors = [
+            FactorScore(
+                name=f["name"],
+                score=f["score"],
+                weight=f["weight"],
+                reasoning=f["reasoning"],
+            )
+            for f in s.get("factors", [])
+        ]
+        bps = [
+            BonusPenalty(
+                name=b["name"],
+                points=b["points"],
+                reasoning=b["reasoning"],
+            )
+            for b in s.get("bonuses_penalties", [])
+        ]
+        results.append(SessionScore(
+            session=session_info,
+            factors=factors,
+            bonuses_penalties=bps,
+            base_score=s.get("base_score", 50.0),
+            total_score=s.get("total_score", 50.0),
+            recommendation=s.get("recommendation", "Watch Highlights"),
+            circuit_override_applied=s.get("circuit_override", False),
+        ))
+    return results

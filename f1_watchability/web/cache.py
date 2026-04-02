@@ -7,6 +7,7 @@ Cache keys are derived from (year, meeting_key, config_hash) so that:
   - No manual cache clearing is ever needed
 
 Cache lives in a .cache/ directory at the project root.
+Set F1_CACHE_DIR env var to override (e.g. for Railway volumes).
 """
 
 from __future__ import annotations

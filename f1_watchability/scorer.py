@@ -67,7 +67,12 @@ def _score_close_finish(
     drivers: list[DriverResult],
     interval_data: list[dict],
 ) -> FactorScore:
-    """Gap between P1 and P3 at the flag — smaller is better."""
+    """
+    Two-component close finish score:
+      - 40% winner gap: how far ahead was P1 (existing logic)
+      - 60% top 10 pack tightness: average gap between consecutive finishers
+        within the top 10, rewarding close battles through the field
+    """
     final_gaps: dict[int, float] = {}
     for entry in interval_data:
         num = entry.get("driver_number")
@@ -78,22 +83,48 @@ def _score_close_finish(
             except (TypeError, ValueError):
                 pass
 
-    top3 = sorted(drivers, key=lambda d: d.finish_position)[:3]
-    gaps = [final_gaps[d.driver_number] for d in top3[1:] if d.driver_number in final_gaps]
+    top10 = sorted(drivers, key=lambda d: d.finish_position)[:10]
 
-    if not gaps:
+    if not final_gaps or len(top10) < 2:
         return FactorScore("close_finish", 50.0, 0.0, "Insufficient interval data")
 
-    max_gap = max(gaps)
-    # < 0.5s = perfect (100), 1s = great (85), 5s = okay (50), 30s+ = processional (0)
-    score = _sigmoid(max_gap, midpoint=8.0, steepness=-0.3) * (100 / _sigmoid(0, 8.0, -0.3))
-    score = _clamp(100.0 - _linear(max_gap, 0.0, 30.0))
+    # Component 1: winner gap (P1 → P2 gap)
+    p2_gap = final_gaps.get(top10[1].driver_number) if len(top10) > 1 else None
+    if p2_gap is not None:
+        # < 1s = 100, 5s = 70, 30s+ = 0
+        winner_score = _clamp(100.0 - _linear(p2_gap, 0.0, 30.0))
+    else:
+        winner_score = 50.0
+
+    # Component 2: pack tightness — avg gap between consecutive top-10 finishers
+    consecutive_gaps = []
+    sorted_top10 = [d for d in top10 if d.driver_number in final_gaps]
+    for i in range(1, len(sorted_top10)):
+        g_curr = final_gaps[sorted_top10[i].driver_number]
+        g_prev = final_gaps[sorted_top10[i - 1].driver_number]
+        consecutive_gaps.append(g_curr - g_prev)
+
+    if consecutive_gaps:
+        avg_gap = sum(consecutive_gaps) / len(consecutive_gaps)
+        # avg gap < 1s = incredibly close, 5s = moderate, 15s+ = spread out
+        pack_score = _clamp(100.0 - _linear(avg_gap, 0.0, 15.0))
+    else:
+        pack_score = 50.0
+
+    combined = winner_score * 0.40 + pack_score * 0.60
+
+    parts = []
+    if p2_gap is not None:
+        parts.append(f"P1–P2 gap: {p2_gap:.2f}s")
+    if consecutive_gaps:
+        parts.append(f"avg top-10 gap: {avg_gap:.2f}s")
+    reasoning = ", ".join(parts) if parts else "Insufficient data"
 
     return FactorScore(
         name="close_finish",
-        score=score,
-        weight=0.0,  # weight set by caller
-        reasoning=f"P1–P{1+len(gaps)} gap at the flag: {max_gap:.2f}s",
+        score=_clamp(combined),
+        weight=0.0,
+        reasoning=reasoning,
     )
 
 
@@ -103,85 +134,61 @@ def _score_overtakes(
     drivers: list[DriverResult],
 ) -> FactorScore:
     """
-    Count net position gains in the top 10, excluding pit-stop windows.
-    Position data from OpenF1 is time-series (not lap-by-lap), so we sort
-    by date and diff consecutive snapshots per driver.
+    Count net position gains in the top 10, excluding pit-stop laps.
+    Only counts on-track passes to avoid noise from pit cycles.
     """
     if not position_data:
         return FactorScore("overtakes", 50.0, 0.0, "No position data available")
 
-    # Build per-driver time-ordered position list
-    # Sort all entries by date first, then group by driver
-    sorted_data = sorted(position_data, key=lambda e: e.get("date", ""))
-    timeline: dict[int, list[int]] = defaultdict(list)
-    for entry in sorted_data:
+    # Build per-driver lap→position timeline
+    timeline: dict[int, dict[int, int]] = defaultdict(dict)
+    for entry in position_data:
         num = entry.get("driver_number")
+        lap = entry.get("lap_number") or 0
         pos = entry.get("position")
         if num is not None and pos is not None:
-            timeline[num].append(pos)
+            timeline[num][lap] = pos
 
-    # Build pit windows per driver: set of lap numbers to exclude.
-    # We use lap_number from pit stops as an approximation. Since we can't
-    # perfectly align pit laps to time-series snapshots, we instead track
-    # how many consecutive position losses each driver had (pit entry/exit
-    # causes a sudden drop then rise) and filter those out.
-    pit_driver_nums = {p.driver_number for p in pit_stops}
+    # Pit laps to exclude (lap of stop + 1 buffer lap)
+    pit_laps: dict[int, set[int]] = defaultdict(set)
+    for p in pit_stops:
+        pit_laps[p.driver_number].update({p.lap_number, p.lap_number + 1})
 
-    # Top 10 driver numbers by finish position
+    # Top 10 driver numbers (by finish position)
     top10_nums = {d.driver_number for d in sorted(drivers, key=lambda x: x.finish_position)[:10]}
 
     overtake_count = 0
-    for num, positions in timeline.items():
+    for num, laps in timeline.items():
         if num not in top10_nums:
             continue
-        if len(positions) < 2:
-            continue
-
-        # Count position improvements, but skip isolated single-step improvements
-        # that are immediately followed by a loss (likely pit exit noise)
-        for i in range(1, len(positions)):
-            prev_pos = positions[i - 1]
-            curr_pos = positions[i]
-            if curr_pos < prev_pos:
-                # Check if this gain is immediately reversed (pit exit artifact)
-                if i + 1 < len(positions) and positions[i + 1] > curr_pos + 2:
-                    continue  # skip — looks like a pit exit blip
+        sorted_laps = sorted(laps.items())
+        for i in range(1, len(sorted_laps)):
+            prev_lap, prev_pos = sorted_laps[i - 1]
+            curr_lap, curr_pos = sorted_laps[i]
+            if curr_pos < prev_pos and curr_lap not in pit_laps[num]:
                 overtake_count += prev_pos - curr_pos
 
-    # Pit exits inflate the count — apply a discount for cars that pitted
-    pitted_in_top10 = len(pit_driver_nums & top10_nums)
-    overtake_count = max(0, overtake_count - pitted_in_top10 * 2)
-
+    # 0 = 0, 10 = 50, 30+ = 100 (wider curve than before)
     score = _clamp(_linear(overtake_count, 0, 35))
     return FactorScore(
         name="overtakes",
         score=score,
         weight=0.0,
-        reasoning=f"Estimated {overtake_count} on-track position changes in top 10",
+        reasoning=f"Estimated {overtake_count} on-track position gains in top 10",
     )
 
 
 def _score_safety_car(rc_events: list[RaceControlEvent]) -> FactorScore:
     """SC and VSC deployments."""
-    deploy_events = [
-        e for e in rc_events
-        if "deploy" in e.message.lower()
-    ]
-
-    # Check VSC first — "virtual safety car" contains "safety car" as a substring
-    # so order matters. Also check the category field as a fallback.
-    vsc = sum(
-        1 for e in deploy_events
-        if "virtual safety car" in e.message.lower()
-        or e.category.lower() in ("vsc", "virtual safety car")
-    )
     sc = sum(
-        1 for e in deploy_events
-        if ("safety car" in e.message.lower() or e.category.lower() in ("safetycar", "safety car"))
-        and "virtual safety car" not in e.message.lower()
-        and e.category.lower() not in ("vsc", "virtual safety car")
+        1 for e in rc_events
+        if ("safety car" in e.message.lower() or "safetycar" in e.category.lower())
+        and "deploy" in e.message.lower()
     )
-
+    vsc = sum(
+        1 for e in rc_events
+        if "virtual safety car" in e.message.lower() and "deploy" in e.message.lower()
+    )
     total = sc + vsc
     score = _clamp(_linear(total, 0, 3))
     return FactorScore(
@@ -473,11 +480,8 @@ def _detect_bonuses_penalties(
     # ── Multiple SC deployments ───────────────────────────────────────────────
     sc_count = sum(
         1 for e in rc
-        if "deploy" in e.message.lower()
-        and (
-            "safety car" in e.message.lower()
-            or e.category.lower() in ("safetycar", "safety car", "vsc", "virtual safety car")
-        )
+        if ("safety car" in e.message.lower() and "deploy" in e.message.lower())
+        or ("virtual safety car" in e.message.lower() and "deploy" in e.message.lower())
     )
     if sc_count > 1:
         results.append(BonusPenalty(
@@ -556,7 +560,7 @@ def _detect_bonuses_penalties(
 
 # ── Main scoring entry point ──────────────────────────────────────────────────
 
-def score_session(data: SessionRawData, config: dict) -> SessionScore:
+def score_session(data: SessionRawData, config: dict, season_stats=None) -> SessionScore:
     session_type = data.session.session_type
     circuit = data.session.circuit_short_name
     cfg_key = SESSION_TYPE_TO_CONFIG_KEY.get(session_type, "race")
@@ -588,7 +592,7 @@ def score_session(data: SessionRawData, config: dict) -> SessionScore:
         raw_factors["dnf_drama"] = _score_dnf_drama(drivers, data.championship_before, config)
         raw_factors["wet_weather"] = _score_wet_weather(data.weather_samples)
 
-    # ── Apply weights ─────────────────────────────────────────────────────────
+    # ── Apply weights (with optional season-relative normalisation) ───────────
     factor_scores: list[FactorScore] = []
     weighted_sum = 0.0
     total_weight = 0.0
@@ -597,7 +601,19 @@ def score_session(data: SessionRawData, config: dict) -> SessionScore:
         if name not in raw_factors:
             continue
         fs = raw_factors[name]
-        fs.weight = weight
+
+        # Normalise relative to season if we have enough data
+        if season_stats is not None and season_stats.has_enough_data():
+            normalised_score = season_stats.normalise_factor(name, fs.score)
+            fs = FactorScore(
+                name=fs.name,
+                score=_clamp(normalised_score),
+                weight=weight,
+                reasoning=fs.reasoning + f" (season-adjusted from {fs.score:.0f})",
+            )
+        else:
+            fs.weight = weight
+
         factor_scores.append(fs)
         weighted_sum += fs.score * weight
         total_weight += weight
