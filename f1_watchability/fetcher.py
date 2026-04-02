@@ -28,7 +28,35 @@ SESSION_TYPE_MAP = {
     "Sprint Shootout": "Sprint Qualifying",
 }
 
+# session_name fallback — used when session_type alone isn't specific enough
+# (OpenF1 2026+ uses session_type="Race" for both Race and Sprint)
+SESSION_NAME_MAP = {
+    "race": "Race",
+    "qualifying": "Qualifying",
+    "sprint": "Sprint",
+    "sprint qualifying": "Sprint Qualifying",
+    "sprint shootout": "Sprint Qualifying",
+    "sprint race": "Sprint",
+}
+
 SCORABLE_TYPES = set(SESSION_TYPE_MAP.values())
+
+
+def _resolve_session_type(session_type: str, session_name: str) -> str | None:
+    """
+    Determine canonical session type from session_type and session_name fields.
+    session_name is used as a tiebreaker when session_type is ambiguous
+    (e.g. OpenF1 2026 uses session_type='Race' for both Race and Sprint).
+    """
+    name_lower = (session_name or "").lower().strip()
+    type_lower = (session_type or "").lower().strip()
+
+    # Try session_name first if it's more specific
+    if name_lower in SESSION_NAME_MAP:
+        return SESSION_NAME_MAP[name_lower]
+
+    # Fall back to session_type
+    return SESSION_TYPE_MAP.get(session_type)
 
 
 def get_scorable_sessions(year: int) -> list[SessionInfo]:
@@ -45,7 +73,10 @@ def get_scorable_sessions(year: int) -> list[SessionInfo]:
 
     result = []
     for s in raw_sessions:
-        canonical = SESSION_TYPE_MAP.get(s.get("session_type", ""))
+        canonical = _resolve_session_type(
+            s.get("session_type", ""),
+            s.get("session_name", ""),
+        )
         if not canonical:
             continue
         meeting_key = s.get("meeting_key", 0)
