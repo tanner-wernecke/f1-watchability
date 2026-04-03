@@ -370,8 +370,9 @@
   <div class="field">
     <label for="year-select">Season</label>
     <select id="year-select">
+      <option value="2026" selected>2026</option>
       <option value="2025">2025</option>
-      <option value="2024" selected>2024</option>
+      <option value="2024">2024</option>
       <option value="2023">2023</option>
     </select>
   </div>
@@ -523,6 +524,19 @@
     return "";
   }
 
+  function recLabel(rec, sessionType) {
+    // For qualifying sessions, "Race in 30" never appears, so we just show the label as-is.
+    // But make it clear what "Watch Highlights" means in context.
+    if (rec === "Watch Highlights") {
+      const isRace = sessionType === "Race" || sessionType === "Sprint";
+      return isRace ? "Highlights Only" : "Highlights Only";
+    }
+    if (rec === "Race in 30") {
+      return sessionType === "Sprint" ? "Sprint in Full (Short)" : "Race in 30";
+    }
+    return rec;
+  }
+
   function formatBpName(name) {
     return name.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
   }
@@ -604,7 +618,7 @@
             ${adjustedBadge}
           </div>
           <div class="rec-pill ${recClass(ss.recommendation)}">
-            ${recEmoji(ss.recommendation)} ${ss.recommendation}
+            ${recEmoji(ss.recommendation)} ${recLabel(ss.recommendation, ss.session_type)}
           </div>
           <button class="spoiler-btn">Show Reasoning</button>
         </div>
