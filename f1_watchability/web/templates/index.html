@@ -525,15 +525,7 @@
   }
 
   function recLabel(rec, sessionType) {
-    // For qualifying sessions, "Race in 30" never appears, so we just show the label as-is.
-    // But make it clear what "Watch Highlights" means in context.
-    if (rec === "Watch Highlights") {
-      const isRace = sessionType === "Race" || sessionType === "Sprint";
-      return isRace ? "Highlights Only" : "Highlights Only";
-    }
-    if (rec === "Race in 30") {
-      return sessionType === "Sprint" ? "Sprint in Full (Short)" : "Race in 30";
-    }
+    if (rec === "Race in 30" && sessionType === "Sprint") return "Watch Full (Short)";
     return rec;
   }
 

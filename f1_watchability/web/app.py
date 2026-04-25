@@ -25,7 +25,7 @@ def index():
 
 @app.route("/api/calendar")
 def api_calendar():
-    year = request.args.get("year", 2026, type=int)
+    year = request.args.get("year", 2024, type=int)
     try:
         calendar = get_calendar(year)
         return jsonify({"ok": True, "year": year, "meetings": calendar})
@@ -36,7 +36,7 @@ def api_calendar():
 
 @app.route("/api/score")
 def api_score():
-    year        = request.args.get("year", 2026, type=int)
+    year        = request.args.get("year", 2024, type=int)
     meeting_key = request.args.get("meeting_key", type=int)
 
     if meeting_key is None:

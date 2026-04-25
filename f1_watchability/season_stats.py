@@ -1,10 +1,6 @@
 """
-Season statistics — computes per-factor averages across completed race sessions
-in a given season. Used to normalise scores relative to the season baseline
-rather than all-time absolute values.
-
-Falls back to absolute scoring when fewer than MIN_RACES_FOR_RELATIVE completed
-sessions are available (early season).
+Season statistics for relative score normalisation.
+Falls back to absolute scoring until MIN_RACES_FOR_RELATIVE races are complete.
 """
 
 from __future__ import annotations
@@ -15,12 +11,11 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
-MIN_RACES_FOR_RELATIVE = 4  # Min completed races before relative scoring kicks in
+MIN_RACES_FOR_RELATIVE = 4
 
 
 @dataclass
 class FactorStats:
-    """Running statistics for a single factor across the season."""
     values: list[float] = field(default_factory=list)
 
     def add(self, value: float) -> None:
@@ -35,23 +30,17 @@ class FactorStats:
         return statistics.stdev(self.values) if len(self.values) >= 2 else 20.0
 
     def normalise(self, value: float) -> float:
-        """
-        Map value onto 0–100 relative to the season distribution.
-        Uses z-score: mean → 50, ±2 stdev → ~5/~95.
-        """
         if len(self.values) < 2:
             return value
         sd = self.stdev
         if sd == 0:
             return 50.0
         z = (value - self.mean) / sd
-        normalised = 50.0 + z * 22.5
-        return max(0.0, min(100.0, normalised))
+        return max(0.0, min(100.0, 50.0 + z * 22.5))
 
 
 @dataclass
 class SeasonStats:
-    """Aggregated factor statistics across all completed sessions in a season."""
     year: int
     race_count: int = 0
     factors: dict[str, FactorStats] = field(default_factory=dict)
@@ -73,10 +62,6 @@ class SeasonStats:
 
 
 def build_season_stats(completed_reports: list, current_meeting_key: int) -> SeasonStats:
-    """
-    Build a SeasonStats from all completed weekend reports EXCLUDING
-    the current meeting so we don't bias the current race's own score.
-    """
     year = completed_reports[0].year if completed_reports else 0
     stats = SeasonStats(year=year)
 
@@ -88,8 +73,6 @@ def build_season_stats(completed_reports: list, current_meeting_key: int) -> Sea
                 continue
             stats.race_count += 1
             for f in ss.factors:
-                # Strip season-adjustment suffix if present (from previous normalisation)
-                base_score = f.score
-                stats.record_factor(f.name, base_score)
+                stats.record_factor(f.name, f.score)
 
     return stats
