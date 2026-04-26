@@ -176,9 +176,9 @@ def fetch_session_data(session_info: SessionInfo, grid_positions: dict[int, int]
                     continue
                 d = driver_map.get(num, {})
                 classified = (
-                    entry.get("dnf") is None
-                    and entry.get("dns") is None
-                    and entry.get("dsq") is None
+                    not entry.get("dnf", False)
+                    and not entry.get("dns", False)
+                    and not entry.get("dsq", False)
                 )
                 drivers.append(DriverResult(
                     driver_number=num,
@@ -292,7 +292,7 @@ def _build_quali_drivers(
             team_name=d.get("team_name", "Unknown"),
             finish_position=int(pos),
             grid_position=0,
-            is_classified=entry.get("dnf") is None and entry.get("dns") is None,
+            is_classified=not entry.get("dnf", False) and not entry.get("dns", False),
         ))
 
         # gap_to_leader in qualifying is an array [Q1_gap, Q2_gap, Q3_gap]
