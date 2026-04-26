@@ -91,14 +91,14 @@ def api_debug_score():
         return jsonify({"ok": False, "error": "session_key is required"}), 400
     try:
         from ..fetcher import fetch_session_data, get_scorable_sessions
+        from ..scorer import score_session
         sessions = get_scorable_sessions(year=year)
         session_info = next((s for s in sessions if s.session_key == session_key), None)
         if session_info is None:
             return jsonify({"ok": False, "error": f"Session {session_key} not found"}), 404
 
         raw = fetch_session_data(session_info)
-        return jsonify({
-            "ok": True,
+        fetch_result = {
             "session_type": session_info.session_type,
             "session_name": session_info.session_name,
             "drivers_count": len(raw.drivers),
@@ -111,10 +111,32 @@ def api_debug_score():
                 {"pos": d.finish_position, "name": d.full_name, "team": d.team_name, "classified": d.is_classified}
                 for d in sorted(raw.drivers, key=lambda x: x.finish_position)[:5]
             ],
-        })
+        }
+
+        # Now attempt scoring
+        try:
+            result = score_session(raw, _config)
+            score_result = {
+                "scored_ok": True,
+                "total_score": result.total_score,
+                "recommendation": result.recommendation,
+                "factors": [{"name": f.name, "score": f.score} for f in result.factors],
+                "bonuses_penalties": [{"name": b.name, "points": b.points} for b in result.bonuses_penalties],
+            }
+        except Exception as se:
+            import traceback
+            score_result = {
+                "scored_ok": False,
+                "error": str(se),
+                "type": type(se).__name__,
+                "traceback": traceback.format_exc(),
+            }
+
+        return jsonify({"ok": True, "fetch": fetch_result, "score": score_result})
     except Exception as e:
+        import traceback
         logger.exception("Debug score error")
-        return jsonify({"ok": False, "error": str(e), "type": type(e).__name__}), 500
+        return jsonify({"ok": False, "error": str(e), "type": type(e).__name__, "traceback": traceback.format_exc()}), 500
 def api_cache_info():
     from . import cache as cache_store
     return jsonify({"ok": True, "entries": cache_store.cache_info()})
