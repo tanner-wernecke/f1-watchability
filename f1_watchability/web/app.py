@@ -83,7 +83,38 @@ def api_debug():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
-@app.route("/api/cache")
+@app.route("/api/debug/score")
+def api_debug_score():
+    year        = request.args.get("year", 2026, type=int)
+    session_key = request.args.get("session_key", type=int)
+    if session_key is None:
+        return jsonify({"ok": False, "error": "session_key is required"}), 400
+    try:
+        from ..fetcher import fetch_session_data, get_scorable_sessions
+        sessions = get_scorable_sessions(year=year)
+        session_info = next((s for s in sessions if s.session_key == session_key), None)
+        if session_info is None:
+            return jsonify({"ok": False, "error": f"Session {session_key} not found"}), 404
+
+        raw = fetch_session_data(session_info)
+        return jsonify({
+            "ok": True,
+            "session_type": session_info.session_type,
+            "session_name": session_info.session_name,
+            "drivers_count": len(raw.drivers),
+            "position_data_count": len(raw.position_data),
+            "interval_data_count": len(raw.interval_data),
+            "race_control_count": len(raw.race_control),
+            "pit_stops_count": len(raw.pit_stops),
+            "weather_count": len(raw.weather_samples),
+            "top5_drivers": [
+                {"pos": d.finish_position, "name": d.full_name, "team": d.team_name, "classified": d.is_classified}
+                for d in sorted(raw.drivers, key=lambda x: x.finish_position)[:5]
+            ],
+        })
+    except Exception as e:
+        logger.exception("Debug score error")
+        return jsonify({"ok": False, "error": str(e), "type": type(e).__name__}), 500
 def api_cache_info():
     from . import cache as cache_store
     return jsonify({"ok": True, "entries": cache_store.cache_info()})
