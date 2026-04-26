@@ -3,19 +3,11 @@ Fetches and transforms OpenF1 API data into internal models.
 """
 
 from __future__ import annotations
-
 import logging
-from collections import defaultdict
-
 from . import api
 from .models import (
-    ChampionshipEntry,
-    DriverResult,
-    PitStop,
-    RaceControlEvent,
-    SessionInfo,
-    SessionRawData,
-    WeatherSnapshot,
+    ChampionshipEntry, DriverResult, PitStop,
+    RaceControlEvent, SessionInfo, SessionRawData, WeatherSnapshot,
 )
 
 logger = logging.getLogger(__name__)
@@ -28,31 +20,71 @@ SESSION_TYPE_MAP = {
     "Sprint Shootout": "Sprint Qualifying",
 }
 
+# session_name fallback for OpenF1 2026+ where session_type="Race" for both Race and Sprint
+SESSION_NAME_MAP = {
+    "race": "Race",
+    "qualifying": "Qualifying",
+    "sprint": "Sprint",
+    "sprint qualifying": "Sprint Qualifying",
+    "sprint shootout": "Sprint Qualifying",
+    "sprint race": "Sprint",
+}
+
 SCORABLE_TYPES = set(SESSION_TYPE_MAP.values())
 
 
+def _resolve_session_type(session_type: str, session_name: str) -> str | None:
+    """
+    Determine canonical session type using session_name as tiebreaker.
+    OpenF1 2026+ uses session_type='Race' for both Race and Sprint,
+    so session_name is needed to differentiate.
+    """
+    name_lower = (session_name or "").lower().strip()
+    if name_lower in SESSION_NAME_MAP:
+        return SESSION_NAME_MAP[name_lower]
+    return SESSION_TYPE_MAP.get(session_type)
+
+
 def get_scorable_sessions(year: int) -> list[SessionInfo]:
-    raw = api.get_sessions(year)
+    raw_sessions = api.get_sessions(year)
+
+    # Cross-reference meetings endpoint for reliable meeting_name
+    raw_meetings = api.get_meetings(year)
+    meeting_names: dict[int, str] = {
+        m["meeting_key"]: m["meeting_name"]
+        for m in raw_meetings
+        if m.get("meeting_key") and m.get("meeting_name")
+    }
+
     result = []
-    for s in raw:
-        canonical = SESSION_TYPE_MAP.get(s.get("session_type", ""))
+    for s in raw_sessions:
+        canonical = _resolve_session_type(
+            s.get("session_type", ""),
+            s.get("session_name", ""),
+        )
         if not canonical:
             continue
+        meeting_key = s.get("meeting_key", 0)
+        meeting_name = (
+            meeting_names.get(meeting_key)
+            or s.get("meeting_name")
+            or s.get("location")
+            or "Unknown GP"
+        )
         result.append(SessionInfo(
             session_key=s["session_key"],
             session_name=s.get("session_name", canonical),
             session_type=canonical,
-            meeting_name=s.get("meeting_name", "Unknown GP"),
+            meeting_name=meeting_name,
             circuit_short_name=s.get("circuit_short_name", s.get("location", "Unknown")),
             date_start=s.get("date_start", ""),
             year=year,
-            meeting_key=s.get("meeting_key", 0),
+            meeting_key=meeting_key,
         ))
     return result
 
 
 def get_meetings_with_sessions(year: int) -> dict[int, list[SessionInfo]]:
-    """Group scorable sessions by meeting_key, preserving session order."""
     sessions = get_scorable_sessions(year)
     grouped: dict[int, list[SessionInfo]] = {}
     for s in sessions:
@@ -61,12 +93,18 @@ def get_meetings_with_sessions(year: int) -> dict[int, list[SessionInfo]]:
 
 
 def fetch_grid_positions(qualifying_session_key: int) -> dict[int, int]:
-    """
-    Returns {driver_number: grid_position} from a qualifying session's
-    final position snapshot. Used to enrich race DriverResult objects.
-    """
+    raw = api.get_session_result(qualifying_session_key)
+    if raw:
+        final: dict[int, int] = {}
+        for entry in raw:
+            num = entry.get("driver_number")
+            pos = entry.get("position")
+            if num is not None and pos is not None:
+                final[num] = int(pos)
+        if final:
+            return final
     raw_position = api.get_position(qualifying_session_key)
-    final: dict[int, int] = {}
+    final = {}
     for p in raw_position:
         num = p.get("driver_number")
         pos = p.get("position")
@@ -78,19 +116,26 @@ def fetch_grid_positions(qualifying_session_key: int) -> dict[int, int]:
 def fetch_session_data(session_info: SessionInfo, grid_positions: dict[int, int] | None = None) -> SessionRawData:
     sk = session_info.session_key
     session_type = session_info.session_type
+    is_race_type = session_type in ("Race", "Sprint")
+    is_quali_type = session_type in ("Qualifying", "Sprint Qualifying")
 
     raw_drivers = api.get_drivers(sk)
-    raw_pits = api.get_pit_stops(sk)
     raw_rc = api.get_race_control(sk)
     raw_weather = api.get_weather(sk)
-    raw_position = api.get_position(sk)
-    raw_intervals = api.get_intervals(sk)
-    raw_laps = api.get_laps(sk)
 
-    # Championship standings — only available for race-type sessions
+    raw_pits = []
+    raw_position = []
+    raw_intervals = []
+    raw_laps = []
     championship_before: list[ChampionshipEntry] = []
     championship_after: list[ChampionshipEntry] = []
-    if session_type in ("Race", "Sprint"):
+
+    if is_race_type:
+        raw_pits = api.get_pit_stops(sk)
+        raw_position = api.get_position(sk)
+        raw_intervals = api.get_intervals(sk)
+        raw_laps = api.get_laps(sk)
+
         raw_champ = api.get_championship_drivers(sk)
         for entry in raw_champ:
             driver_num = entry.get("driver_number")
@@ -103,44 +148,65 @@ def fetch_session_data(session_info: SessionInfo, grid_positions: dict[int, int]
                 points=float(entry.get("points", 0) or 0),
                 position=int(entry.get("position", 99) or 99),
             )
-            # OpenF1 returns both start and end standings in the same endpoint
-            # keyed by "meeting_key" context; we differentiate by points_before/points fields
-            # For simplicity we store both using position_start vs position fields
             if entry.get("position_start") is not None:
-                before = ChampionshipEntry(
+                championship_before.append(ChampionshipEntry(
                     driver_number=driver_num,
                     full_name=ce.full_name,
                     team_name=ce.team_name,
                     points=float(entry.get("points_before", 0) or 0),
                     position=int(entry.get("position_start", 99) or 99),
-                )
-                championship_before.append(before)
+                ))
             championship_after.append(ce)
 
-    # Build driver number → info map
     driver_map: dict[int, dict] = {
         d["driver_number"]: d for d in raw_drivers if d.get("driver_number") is not None
     }
 
-    # Final position per driver (last snapshot wins)
-    final_positions: dict[int, int] = {}
-    for p in raw_position:
-        num = p.get("driver_number")
-        pos = p.get("position")
-        if num is not None and pos is not None:
-            final_positions[num] = pos
-
-    drivers: list[DriverResult] = []
-    for num, pos in final_positions.items():
-        d = driver_map.get(num, {})
-        drivers.append(DriverResult(
-            driver_number=num,
-            full_name=d.get("full_name", f"Driver #{num}"),
-            team_name=d.get("team_name", "Unknown"),
-            finish_position=pos,
-            grid_position=(grid_positions or {}).get(num, 0),
-        ))
-    drivers.sort(key=lambda x: x.finish_position)
+    if is_quali_type:
+        drivers, interval_data = _build_quali_drivers(sk, driver_map)
+    else:
+        # Prefer session_result for accurate final positions
+        drivers = []
+        raw_result = api.get_session_result(sk)
+        if raw_result:
+            for entry in raw_result:
+                num = entry.get("driver_number")
+                pos = entry.get("position")
+                if num is None or pos is None:
+                    continue
+                d = driver_map.get(num, {})
+                classified = (
+                    entry.get("dnf") is None
+                    and entry.get("dns") is None
+                    and entry.get("dsq") is None
+                )
+                drivers.append(DriverResult(
+                    driver_number=num,
+                    full_name=d.get("full_name", f"Driver #{num}"),
+                    team_name=d.get("team_name", "Unknown"),
+                    finish_position=int(pos),
+                    grid_position=(grid_positions or {}).get(num, 0),
+                    is_classified=classified,
+                ))
+        else:
+            # Fallback: last position snapshot
+            final_positions: dict[int, int] = {}
+            for p in raw_position:
+                num = p.get("driver_number")
+                pos = p.get("position")
+                if num is not None and pos is not None:
+                    final_positions[num] = pos
+            for num, pos in final_positions.items():
+                d = driver_map.get(num, {})
+                drivers.append(DriverResult(
+                    driver_number=num,
+                    full_name=d.get("full_name", f"Driver #{num}"),
+                    team_name=d.get("team_name", "Unknown"),
+                    finish_position=pos,
+                    grid_position=(grid_positions or {}).get(num, 0),
+                ))
+        drivers.sort(key=lambda x: x.finish_position)
+        interval_data = raw_intervals
 
     pit_stops = [
         PitStop(
@@ -178,7 +244,76 @@ def fetch_session_data(session_info: SessionInfo, grid_positions: dict[int, int]
         weather_samples=weather_samples,
         position_data=raw_position,
         lap_data=raw_laps,
-        interval_data=raw_intervals,
+        interval_data=interval_data,
         championship_before=championship_before,
         championship_after=championship_after,
     )
+
+
+def _build_quali_drivers(
+    session_key: int,
+    driver_map: dict[int, dict],
+) -> tuple[list[DriverResult], list[dict]]:
+    raw_result = api.get_session_result(session_key)
+
+    if not raw_result:
+        raw_position = api.get_position(session_key)
+        final: dict[int, int] = {}
+        for p in raw_position:
+            num = p.get("driver_number")
+            pos = p.get("position")
+            if num is not None and pos is not None:
+                final[num] = pos
+        drivers = []
+        for num, pos in final.items():
+            d = driver_map.get(num, {})
+            drivers.append(DriverResult(
+                driver_number=num,
+                full_name=d.get("full_name", f"Driver #{num}"),
+                team_name=d.get("team_name", "Unknown"),
+                finish_position=pos,
+                grid_position=0,
+            ))
+        return sorted(drivers, key=lambda x: x.finish_position), []
+
+    drivers = []
+    interval_data = []
+
+    for entry in raw_result:
+        num = entry.get("driver_number")
+        pos = entry.get("position")
+        if num is None or pos is None:
+            continue
+
+        d = driver_map.get(num, {})
+        drivers.append(DriverResult(
+            driver_number=num,
+            full_name=d.get("full_name", f"Driver #{num}"),
+            team_name=d.get("team_name", "Unknown"),
+            finish_position=int(pos),
+            grid_position=0,
+            is_classified=entry.get("dnf") is None and entry.get("dns") is None,
+        ))
+
+        # gap_to_leader in qualifying is an array [Q1_gap, Q2_gap, Q3_gap]
+        gap_raw = entry.get("gap_to_leader")
+        gap = None
+        if isinstance(gap_raw, list):
+            for g in reversed(gap_raw):
+                if g is not None:
+                    try:
+                        gap = float(g)
+                        break
+                    except (TypeError, ValueError):
+                        pass
+        elif gap_raw is not None:
+            try:
+                gap = float(gap_raw)
+            except (TypeError, ValueError):
+                pass
+
+        if gap is not None:
+            interval_data.append({"driver_number": num, "gap_to_leader": gap})
+
+    drivers.sort(key=lambda x: x.finish_position)
+    return drivers, interval_data

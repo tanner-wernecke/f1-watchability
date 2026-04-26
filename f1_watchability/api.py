@@ -81,3 +81,13 @@ def get_championship_drivers(session_key: int) -> list[dict]:
 def get_championship_teams(session_key: int) -> list[dict]:
     """Constructor championship standings. Only available for race sessions."""
     return _get("championship_teams", {"session_key": session_key})
+
+
+def get_session_result(session_key: int) -> list[dict]:
+    """Final classified results — works for Race, Sprint, and Qualifying sessions."""
+    return _get("session_result", {"session_key": session_key})
+
+
+def get_meetings(year: int) -> list[dict]:
+    """All race meetings for a given year — reliable source of meeting_name."""
+    return _get("meetings", {"year": year})
