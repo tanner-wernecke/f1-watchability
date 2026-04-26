@@ -7,4 +7,4 @@ RUN pip install --no-cache-dir -r requirements.txt && python -m gunicorn --versi
 
 COPY . .
 
-CMD python -m gunicorn wsgi:app --bind 0.0.0.0:${PORT:-8080} --timeout 120 --workers 2
+CMD python -m gunicorn wsgi:app --bind 0.0.0.0:${PORT:-8080} --timeout 180 --workers 2

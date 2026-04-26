@@ -72,7 +72,7 @@ def score_weekend(meeting_key: int, year: int, config: dict | None = None) -> "W
             logger.warning(f"Could not fetch sprint qualifying grid positions: {e}")
 
     # ── Season stats for relative normalisation ───────────────────────────────
-    season_stats = _build_season_stats_for(year, meeting_key, config, cfg_hash)
+    season_stats = _build_season_stats_for(year, meeting_key, config, cfg_hash, meetings)
 
     # ── Score each session ────────────────────────────────────────────────────
     scored: list[SessionScore] = []
@@ -106,13 +106,12 @@ def score_weekend(meeting_key: int, year: int, config: dict | None = None) -> "W
     return report
 
 
-def _build_season_stats_for(year: int, current_meeting_key: int, config: dict, cfg_hash: str):
-    from ..models import SessionInfo as SI
+def _build_season_stats_for(year: int, current_meeting_key: int, config: dict, cfg_hash: str, meetings: dict | None = None):
+    if meetings is None:
+        meetings = get_meetings_with_sessions(year=year)
 
     completed_reports = []
-    all_meetings = get_meetings_with_sessions(year=year)
-
-    for mk in all_meetings:
+    for mk in meetings:
         if mk == current_meeting_key:
             continue
         cached = cache_store.get(year, mk, cfg_hash)
